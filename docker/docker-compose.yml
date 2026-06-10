@@ -1,0 +1,85 @@
+# AgentHub — Multi-Agent Collaboration Platform
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Services:
+#   backend  — FastAPI REST + SSE server (port 8000)
+#   frontend — Streamlit UI (port 8501)
+#
+# The frontend connects to the backend via the internal Docker network
+# using the service name "backend".  The AGENTHUB_API_URL env var
+# is set to http://backend:8000 inside the frontend container.
+
+version: "3.9"
+
+services:
+  # ====================================================================
+  # Backend — FastAPI
+  # ====================================================================
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: agenthub-backend:latest
+    container_name: agenthub-backend
+    ports:
+      - "${AGENTHUB_BACKEND_PORT:-8000}:8000"
+    environment:
+      # LLM configuration (override via .env or shell)
+      - AGENTHUB_LLM__API_KEY=${AGENTHUB_LLM_API_KEY:-}
+      - AGENTHUB_LLM__MODEL=${AGENTHUB_LLM_MODEL:-claude-sonnet-4-6}
+      - AGENTHUB_LLM__BASE_URL=${AGENTHUB_LLM_BASE_URL:-}
+      - AGENTHUB_LLM__MAX_TOKENS=${AGENTHUB_LLM_MAX_TOKENS:-4096}
+      # Orchestrator
+      - AGENTHUB_ORCHESTRATOR__DEFAULT_RETRIES=${AGENTHUB_ORCHESTRATOR_RETRIES:-3}
+      - AGENTHUB_ORCHESTRATOR__DEFAULT_TIMEOUT=${AGENTHUB_ORCHESTRATOR_TIMEOUT:-60.0}
+      - AGENTHUB_ORCHESTRATOR__FALLBACK_AGENT=${AGENTHUB_ORCHESTRATOR_FALLBACK:-claude}
+      # Storage
+      - AGENTHUB_STORAGE__TYPE=${AGENTHUB_STORAGE_TYPE:-sqlite}
+      - AGENTHUB_STORAGE__PATH=${AGENTHUB_STORAGE_PATH:-data/agenthub.db}
+      # Server
+      - AGENTHUB_SERVER__HOST=0.0.0.0
+      - AGENTHUB_SERVER__PORT=8000
+      - AGENTHUB_SERVER__LOG_LEVEL=${AGENTHUB_LOG_LEVEL:-info}
+    volumes:
+      # Persist SQLite database across restarts
+      - agenthub-data:/app/data
+    restart: unless-stopped
+    networks:
+      - agenthub-net
+
+  # ====================================================================
+  # Frontend — Streamlit
+  # ====================================================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    image: agenthub-frontend:latest
+    container_name: agenthub-frontend
+    ports:
+      - "${AGENTHUB_FRONTEND_PORT:-8501}:8501"
+    environment:
+      # Points to the backend service on the internal Docker network
+      - AGENTHUB_API_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - agenthub-net
+
+# ====================================================================
+# Volumes
+# ====================================================================
+volumes:
+  agenthub-data:
+    driver: local
+
+# ====================================================================
+# Networks
+# ====================================================================
+networks:
+  agenthub-net:
+    driver: bridge

@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing & coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Data
+data/
+*.db
+
+# Environment
+.env
+!.env.example
+
+# Claude
+.claude/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Docker (keep docker-compose and Dockerfiles, ignore build artifacts)
+docker-compose.override.yml

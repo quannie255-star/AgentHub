@@ -1,0 +1,50 @@
+# AgentHub Global Configuration
+# All values can be overridden via AGENTHUB_* environment variables
+
+# --- LLM Settings ---
+llm:
+  api_key: ""                     # AGENTHUB_LLM__API_KEY
+  model: "claude-sonnet-4-6"      # AGENTHUB_LLM__MODEL
+  base_url: ""                    # AGENTHUB_LLM__BASE_URL
+  max_tokens: 4096
+  temperature: 0.7
+
+# --- Agent Settings ---
+agents:
+  claude:
+    enabled: true
+    cli_path: "claude"            # path to claude CLI
+    max_concurrency: 3
+  codex:
+    enabled: false
+    cli_path: "codex"             # path to codex CLI
+    max_concurrency: 2
+
+# --- Orchestrator Settings ---
+orchestrator:
+  default_retries: 3
+  default_timeout: 60.0           # seconds
+  fallback_agent: "claude"        # default fallback agent name
+  max_subtasks: 10
+
+# --- Storage Settings ---
+storage:
+  type: "sqlite"                  # sqlite | json | postgresql
+  path: "data/agenthub.db"        # AGENTHUB_STORAGE__PATH
+  chat_history_limit: 200
+
+# --- Server Settings ---
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["http://localhost:8501", "http://localhost:8080"]
+  log_level: "info"               # debug | info | warning | error
+
+# --- Tool Settings ---
+tools:
+  diff:
+    max_file_size: 1048576        # 1 MB
+  preview:
+    sandbox_port_range: [9000, 9100]
+  deploy:
+    docker_compose_path: "docker/docker-compose.yml"

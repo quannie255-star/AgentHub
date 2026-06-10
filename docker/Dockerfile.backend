@@ -1,0 +1,45 @@
+# AgentHub Backend — FastAPI REST + SSE server
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="AgentHub Backend"
+LABEL org.opencontainers.image.description="Multi-Agent Collaboration Platform — FastAPI server"
+
+WORKDIR /app
+
+# --- System dependencies ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Python dependencies (layer cache friendly) ---
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    "pydantic>=2.0" \
+    "pydantic-settings>=2.0" \
+    "fastapi>=0.115.0" \
+    "uvicorn[standard]>=0.30.0" \
+    "sse-starlette>=2.0" \
+    "httpx>=0.27.0" \
+    "websockets>=12.0" \
+    "pyyaml>=6.0" \
+    "aiosqlite>=0.20.0" \
+    "jinja2>=3.1.0" \
+    "python-multipart>=0.0.9"
+
+# --- Application code ---
+COPY src/ ./src/
+COPY config/ ./config/
+COPY README.md ./
+
+# --- Create data directory for SQLite (if used) ---
+RUN mkdir -p /app/data
+
+# --- Health check ---
+HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+# Uvicorn runs the factory: create_app() → FastAPI
+CMD ["uvicorn", "src.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
