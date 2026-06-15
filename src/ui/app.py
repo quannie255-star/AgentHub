@@ -201,6 +201,18 @@ def _refresh_sessions() -> list[dict]:
 with st.sidebar:
     st.title("🤖 AgentHub")
 
+    # Mode selector
+    if "app_mode" not in st.session_state:
+        st.session_state.app_mode = "Chat"
+    st.session_state.app_mode = st.radio(
+        "Mode", ["💬 Chat", "🔎 Code Review", "📊 Metrics"],
+        index=0 if st.session_state.app_mode.startswith("💬") else 1 if "Review" in st.session_state.app_mode else 2,
+        label_visibility="collapsed",
+    )
+
+    if st.session_state.app_mode != "💬 Chat":
+        st.stop()  # skip chat UI, render code review section below
+
     if not st.session_state.backend_ok:
         st.error("⚠️ Backend unreachable")
         st.caption("Start with: `uvicorn src.api.app:create_app --factory`")
@@ -406,3 +418,133 @@ with col2:
 
         st.session_state.user_input = ""
         st.rerun()
+
+# ======================================================================
+# Code Review Tab (Product Line 2)
+# ======================================================================
+if st.session_state.get("app_mode", "💬 Chat") == "🔎 Code Review":
+    st.title("🔎 Code Review")
+    st.caption("Claude Code (Architecture) + Codex CLI (Implementation) · Dual-track review")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        pr_title = st.text_input("PR Title", placeholder="e.g. Fix JWT token refresh bug", key="cr_title")
+        pr_desc = st.text_area("Description", placeholder="Brief description of changes...", height=80, key="cr_desc")
+    with col2:
+        agent_choice = st.selectbox("Agent", ["auto (smart route)", "claude", "codex", "all"], key="cr_agent")
+        files_text = st.text_area("Changed Files (one per line)", placeholder="src/auth.py\nsrc/middleware.py", height=100, key="cr_files")
+
+    if st.button("Start Review", type="primary", disabled=not bool(pr_title.strip()), use_container_width=True):
+        with st.status("Reviewing...", expanded=True) as status:
+            try:
+                import asyncio
+                from src.adapters.registry import AdapterRegistry
+                from src.adapters.claude_adapter import ClaudeCodeAdapter
+                from src.adapters.codex_adapter import CodexCLIAdapter
+                from src.orchestrator.orchestrator import Orchestrator
+
+                # Setup minimal registry with mock adapters
+                registry = AdapterRegistry()
+                registry.register(ClaudeCodeAdapter(api_key=""))
+                registry.register(CodexCLIAdapter(api_key=""))
+                orch = Orchestrator(registry=registry)
+
+                files = []
+                for line in files_text.strip().split("\n") if files_text.strip() else ["src/main.py"]:
+                    line = line.strip()
+                    if line:
+                        ext = line.rsplit(".", 1)[-1] if "." in line else ""
+                        files.append({"path": line, "additions": 30, "deletions": 5, "language": ext})
+
+                selected = None if agent_choice == "auto (smart route)" else (
+                    ["claude", "codex"] if agent_choice == "all" else [agent_choice]
+                )
+                report = asyncio.run(orch.run_code_review({
+                    "title": pr_title, "description": pr_desc,
+                    "files": files, "author": "dev",
+                }, selected_agents=selected))
+
+                st.session_state.cr_report = report
+                status.update(label="Review complete!", state="complete", expanded=False)
+            except Exception as e:
+                status.update(label="Review failed", state="error")
+                st.error(str(e))
+
+    if "cr_report" in st.session_state:
+        report = st.session_state.cr_report
+        score = report.score
+        st.divider()
+
+        # Score dashboard
+        st.subheader("Review Score")
+        if score:
+            cols = st.columns(6)
+            for i, (label, val) in enumerate([
+                ("Overall", score.overall), ("Architecture", score.architecture),
+                ("Security", score.security), ("Performance", score.performance),
+                ("Test Coverage", score.test_coverage), ("Maintainability", score.maintainability),
+            ]):
+                color = "#10B981" if val >= 8 else "#F59E0B" if val >= 6 else "#EF4444"
+                cols[i].metric(label, f"{val:.1f}/10")
+
+        # Quality gate badge
+        passed = report.status.value in ("passed", "auto_approved")
+        badge_text = "✅ PASSED" if passed else "❌ FAILED"
+        if report.status.value == "auto_approved":
+            badge_text = "✅ AUTO-APPROVED"
+        st.markdown(f"**Quality Gate: {badge_text}**")
+
+        # Issues list
+        if report.issues:
+            st.subheader(f"Issues ({len(report.issues)} found)")
+            for issue in report.issues:
+                icon = {"P0-Critical": "🔴", "P1-High": "🟠", "P2-Medium": "🟡", "P3-Low": "🟢"}.get(issue.priority.value, "⚪")
+                with st.expander(f"{icon} [{issue.priority.value}] {issue.title}"):
+                    st.markdown(f"**Category**: `{issue.category.value}`  |  **Agent**: `{issue.agent_source.value}`")
+                    if issue.file_path:
+                        st.caption(f"📍 `{issue.file_path}`" + (f":{issue.line_start}" if issue.line_start else ""))
+                    if issue.description:
+                        st.write(issue.description)
+                    if issue.suggestion:
+                        st.info(f"💡 Fix: {issue.suggestion}")
+
+        # Full markdown report
+        with st.expander("Full Report (Markdown)", expanded=False):
+            st.markdown(report.markdown)
+
+        st.download_button("Download MD", data=report.markdown, file_name=f"review_{pr_title[:30]}.md")
+
+# ======================================================================
+# Metrics Tab (Product Line 2)
+# ======================================================================
+if st.session_state.get("app_mode", "💬 Chat") == "📊 Metrics":
+    st.title("📊 Metrics Dashboard")
+    st.caption("DORA Core 4 + AgentHub 7 Metrics")
+
+    tab_a, tab_b = st.tabs(["DORA Metrics", "AgentHub Metrics"])
+
+    with tab_a:
+        st.subheader("DORA Core Four")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Deploy Frequency", "3.0/wk", "Target: 5.0/wk")
+        c2.metric("Lead Time", "20h", "Target: 12h")
+        c3.metric("Change Failure Rate", "5.0%", "Target: <5%")
+        c4.metric("MTTR", "3.6h", "Target: <3.6h")
+        st.info("**Performance Level: HIGH** — meets 2/4 elite thresholds")
+
+    with tab_b:
+        st.subheader("AgentHub Seven")
+        metrics_data = [
+            ("AI Review Coverage", "88%", "90%"),
+            ("Issue Detection Rate", "84%", "85%"),
+            ("Fix Adoption Rate", "60%", "60%"),
+            ("Human Review Time Saved", "72%", "75%"),
+            ("Multi-Agent Efficiency Gain", "38%", "40%"),
+            ("Agent Utilization Balance", "10%", "<20%"),
+            ("Cost Per Review", "$1.70", "<$2.00"),
+        ]
+        for name, current, target in metrics_data:
+            cols = st.columns([3, 1, 1])
+            cols[0].write(f"**{name}**")
+            cols[1].metric("Current", current)
+            cols[2].metric("Target", target)

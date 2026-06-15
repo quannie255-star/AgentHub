@@ -133,8 +133,10 @@ def create_app() -> FastAPI:
     # Lazy import routes to avoid circular deps
     from src.api.routes.sessions import router as sessions_router
     from src.api.routes.chat import router as chat_router
+    from src.api.routes.review import router as review_router
 
     app.include_router(sessions_router)
     app.include_router(chat_router)
+    app.include_router(review_router)
 
     return app

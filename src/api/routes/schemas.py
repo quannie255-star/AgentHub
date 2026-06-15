@@ -117,3 +117,37 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Any = None
     request_id: str
+
+
+# ---------------------------------------------------------------------------
+# Code Review (Product Line 2)
+# ---------------------------------------------------------------------------
+
+class ReviewRequest(BaseModel):
+    """Request body for POST /api/review."""
+    title: str = Field(..., min_length=1, description="PR title")
+    description: str = Field(default="", description="PR description")
+    author: str = Field(default="dev", description="PR author")
+    files: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Changed files: [{path, additions, deletions, language}]",
+    )
+    branch: str = Field(default="", description="Source branch")
+    target_branch: str = Field(default="main")
+    repository: str = Field(default="")
+    selected_agents: list[str] | None = Field(
+        default=None, description="Manual agent selection (@mention override)"
+    )
+
+
+class ReviewResponse(BaseModel):
+    """Response for POST /api/review."""
+    task_id: str
+    status: str
+    message: str
+
+
+class MetricsResponse(BaseModel):
+    """Response for GET /api/metrics/*."""
+    metrics: dict[str, Any]
+    timestamp: str

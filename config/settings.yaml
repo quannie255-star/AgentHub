@@ -48,3 +48,47 @@ tools:
     sandbox_port_range: [9000, 9100]
   deploy:
     docker_compose_path: "docker/docker-compose.yml"
+
+# --- Code Review Settings (Product Line 2) ---
+code_review:
+  size_thresholds:
+    small: 50
+    medium: 200
+
+  quality_gates:
+    min_overall_score: 6.0
+    min_security_score: 7.0
+    min_performance_score: 6.0
+    min_test_coverage_score: 5.0
+    auto_approve_min_score: 8.5
+    auto_approve_max_critical: 0
+    auto_approve_max_high: 1
+    auto_approve_max_total_issues: 3
+
+  scoring:
+    base_score: 10.0
+    critical_penalty: 3.0
+    high_penalty: 1.5
+    medium_penalty: 0.5
+    low_penalty: 0.1
+
+  mock_mode:
+    enabled_when_no_api_key: true
+    synthetic_issue_count: 5
+
+# --- Metrics Targets (Product Line 2) ---
+metrics:
+  dora_targets:
+    deployment_frequency_per_week: 5.0
+    lead_time_hours: 12
+    change_failure_rate_percent: 5.0
+    mttr_hours: 3.6
+
+  agenthub_targets:
+    ai_review_coverage: 0.90
+    ai_issue_detection_rate: 0.85
+    ai_fix_adoption_rate: 0.60
+    human_review_time_saved_pct: 0.75
+    multi_agent_efficiency_gain: 0.40
+    cost_per_review_usd: 2.00
+    agent_utilization_balance_pct: 20.0
