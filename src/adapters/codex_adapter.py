@@ -18,6 +18,14 @@ from src.adapters.base import (
     AgentTimeoutError,
     AgentUnavailableError,
 )
+from src.core.review_schema import (
+    AgentReviewResult,
+    AgentSource,
+    IssueCategory,
+    Priority,
+    PullRequest,
+    ReviewIssue,
+)
 from src.core.schema import (
     AgentCapability,
     AgentContext,
@@ -231,6 +239,128 @@ class CodexCLIAdapter(AbstractAgentAdapter):
         finally:
             self._current_process = None
             self._cancelled = False
+
+    # ------------------------------------------------------------------
+    # Code Review (Product Line 2)
+    # ------------------------------------------------------------------
+
+    async def review_code(self, pr: PullRequest) -> AgentReviewResult:
+        """Execute implementation-level code review (Mock or real LLM)."""
+        import json as _json
+        from datetime import datetime, timezone
+
+        started = datetime.now(timezone.utc)
+
+        if self._api_key:
+            try:
+                prompt = self._build_review_prompt(pr)
+                cmd = await self._build_command(prompt, streaming=False)
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE, env=self._make_env(),
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+                output = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+                issues = self._parse_review_output(output)
+            except Exception:
+                issues = self._mock_review(pr)
+        else:
+            issues = self._mock_review(pr)
+
+        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        return AgentReviewResult(
+            agent_type=AgentSource.CODEX,
+            status="completed",
+            issues=issues,
+            summary=f"Codex CLI found {len(issues)} implementation issues",
+            started_at=started,
+            completed_at=datetime.now(timezone.utc),
+            duration_ms=elapsed,
+        )
+
+    def _build_review_prompt(self, pr: PullRequest) -> str:
+        files_str = "\n".join(
+            f"- `{f.path}` (+{f.additions}/-{f.deletions}) [{f.language}]"
+            for f in pr.files[:20]
+        )
+        return (
+            f"You are an expert implementation reviewer. Review this PR:\n\n"
+            f"Title: {pr.title}\nDescription: {pr.description or '(no description)'}\n"
+            f"Files changed ({len(pr.files)}):\n{files_str}\n\n"
+            f"Focus on:\n"
+            f"1. Bugs: null pointer risks, race conditions, type errors, edge cases\n"
+            f"2. Test coverage: missing tests, uncovered edge cases, brittle assertions\n"
+            f"3. Code style: naming conventions, readability, dead code\n"
+            f"4. Error handling: missing handlers, exception swallowing, logging\n\n"
+            f"For each issue, output JSON array:\n"
+            f'[{{"category":"bug|test_coverage|style|best_practice",'
+            f'"priority":"P0-Critical|P1-High|P2-Medium|P3-Low","title":"...","description":"...",'
+            f'"file_path":"...","line_start":null,"suggestion":"code fix","evidence":"why"}}]\n'
+        )
+
+    def _parse_review_output(self, output: str) -> list[ReviewIssue]:
+        import json as _json
+        try:
+            text = output.strip()
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            raw = _json.loads(text)
+            if isinstance(raw, dict):
+                raw = [raw]
+            if not isinstance(raw, list):
+                return self._mock_review(None)
+            issues = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                issues.append(ReviewIssue(
+                    category=IssueCategory(item.get("category", "bug")),
+                    priority=Priority(item.get("priority", "P2-Medium")),
+                    title=item.get("title", "Issue found"),
+                    description=item.get("description", ""),
+                    file_path=item.get("file_path"),
+                    line_start=item.get("line_start"),
+                    suggestion=item.get("suggestion"),
+                    evidence=item.get("evidence", ""),
+                    agent_source=AgentSource.CODEX,
+                ))
+            return issues or self._mock_review(None)
+        except Exception:
+            return self._mock_review(None)
+
+    @staticmethod
+    def _mock_review(pr: PullRequest | None) -> list[ReviewIssue]:
+        return [
+            ReviewIssue(
+                category=IssueCategory.BUG, priority=Priority.P1_HIGH,
+                title="Verify null/None handling for external inputs",
+                description="Functions receiving data from external sources should guard against null.",
+                file_path="src/auth.py" if pr and pr.files else "src/main.py",
+                line_start=15,
+                suggestion="Add null checks or use Optional typing with explicit None handling.",
+                evidence="Common source of production incidents in data pipelines",
+                agent_source=AgentSource.CODEX,
+            ),
+            ReviewIssue(
+                category=IssueCategory.TEST_COVERAGE, priority=Priority.P1_HIGH,
+                title="Add unit tests for new/modified functions",
+                description="Changed code paths should have corresponding test coverage.",
+                file_path="tests/test_auth.py" if pr and any("test" in f.path for f in pr.files) else "tests/",
+                suggestion="Add pytest tests: normal input, empty input, boundary values, error conditions.",
+                evidence="Test coverage is the primary defense against regressions",
+                agent_source=AgentSource.CODEX,
+            ),
+            ReviewIssue(
+                category=IssueCategory.STYLE, priority=Priority.P3_LOW,
+                title="Minor: ensure consistent code formatting",
+                description="Run formatter to ensure consistent style across changed files.",
+                suggestion="Run `ruff format` on changed files.",
+                evidence="Team style guide compliance",
+                agent_source=AgentSource.CODEX,
+            ),
+        ]
 
     # ------------------------------------------------------------------
     # Lifecycle

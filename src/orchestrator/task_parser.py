@@ -152,3 +152,66 @@ class TaskParser:
 
         # Strategy 4: single-item fallback
         return [text.strip()]
+
+    # ------------------------------------------------------------------
+    # Code Review detection (Product Line 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def is_code_review_task(message: str) -> bool:
+        """Detect if a user message is a code review request.
+
+        Examples:
+            >>> TaskParser.is_code_review_task("@claude review src/auth.py")
+            True
+            >>> TaskParser.is_code_review_task("help me fix this bug")
+            False
+        """
+        review_keywords = [
+            "review", "审查", "review", "检查", "code review",
+            "pr ", "pull request", "pr #",
+        ]
+        msg_lower = message.lower()
+        return any(kw in msg_lower for kw in review_keywords)
+
+    @staticmethod
+    def parse_review_target(message: str) -> dict:
+        """Extract review targets from a code review message.
+
+        Returns dict with:
+          - targets: list of file paths / PR numbers mentioned
+          - focus: optional review focus (security, performance, etc.)
+          - agents: list of @-mentioned agents
+        """
+        import re
+        agents = extract_mentions(message)
+        clean = strip_mentions(message)
+
+        # Extract file paths (simple heuristic: words with .ext or /)
+        file_pattern = re.compile(r'([\w/.-]+\.\w{1,6})')
+        files = file_pattern.findall(clean)
+
+        # Extract PR numbers (#123)
+        pr_pattern = re.compile(r'#(\d+)')
+        prs = pr_pattern.findall(clean)
+
+        # Detect review focus
+        focus_keywords = {
+            "security": ["sql injection", "xss", "csrf", "auth", "security", "安全"],
+            "performance": ["performance", "n+1", "slow", "性能", "optimize"],
+            "architecture": ["architecture", "design", "架构"],
+            "testing": ["test", "coverage", "测试"],
+        }
+        focus = None
+        clean_lower = clean.lower()
+        for key, kws in focus_keywords.items():
+            if any(kw in clean_lower for kw in kws):
+                focus = key
+                break
+
+        return {
+            "targets": files + [f"PR#{p}" for p in prs],
+            "focus": focus,
+            "agents": agents,
+            "clean_text": clean,
+        }

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from src.adapters.base import AbstractAgentAdapter, AgentAdapterError
 from src.adapters.registry import AdapterRegistry
+from src.core.review_schema import AgentSource, PullRequest
 from src.core.schema import (
     AgentResponse,
     OrchestrationTask,
@@ -256,3 +257,70 @@ class AgentRouter:
         st.status = TaskStatus.FAILED
         result.error = result.error or f"Failed after {retries} retries"
         return result
+
+    # ------------------------------------------------------------------
+    # Code Review routing (Product Line 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def route_review_task(
+        pr: PullRequest,
+        selected_agents: list[str] | None = None,
+    ) -> list[AgentSource]:
+        """Select review agents based on PR characteristics.
+
+        Rules:
+          - @mention override: explicit agent list always wins
+          - < 50 lines → Codex only (lightweight)
+          - 50-200 lines → Claude + Codex (standard)
+          - > 200 lines → Claude + Codex (deep)
+          - Config-only files → Codex
+          - Source-heavy → always include Claude for architecture
+          - core_module / public_api → Claude always
+
+        Args:
+            pr: PullRequest with auto-computed fields.
+            selected_agents: Explicit agent list from @mention (overrides auto).
+
+        Returns:
+            List of AgentSource values to use for review.
+        """
+        # @mention override
+        if selected_agents:
+            result = []
+            for name in selected_agents:
+                name_lower = name.lower().strip()
+                if name_lower in ("all", "*"):
+                    return [AgentSource.CLAUDE, AgentSource.CODEX]
+                try:
+                    result.append(AgentSource(name_lower))
+                except ValueError:
+                    pass
+            if result:
+                return result
+
+        # Auto-route based on PR features
+        agents: list[AgentSource] = []
+
+        # Size-based routing
+        if pr.change_size == "small":
+            agents = [AgentSource.CODEX]
+        else:
+            agents = [AgentSource.CLAUDE, AgentSource.CODEX]
+
+        # Type-based overrides
+        if pr.change_type == "config":
+            agents = [AgentSource.CODEX]
+        elif pr.change_type == "test":
+            agents = [AgentSource.CODEX]
+
+        # Impact scope: critical areas always get Claude
+        if pr.impact_scope in ("public_api", "core_module"):
+            if AgentSource.CLAUDE not in agents:
+                agents.append(AgentSource.CLAUDE)
+
+        # Source-heavy: ensure Claude
+        if pr.change_type == "source" and AgentSource.CLAUDE not in agents:
+            agents.append(AgentSource.CLAUDE)
+
+        return agents
