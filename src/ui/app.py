@@ -201,17 +201,17 @@ def _refresh_sessions() -> list[dict]:
 with st.sidebar:
     st.title("🤖 AgentHub")
 
-    # Mode selector
+    # Mode selector — Code Review is the default main interface
     if "app_mode" not in st.session_state:
-        st.session_state.app_mode = "Chat"
+        st.session_state.app_mode = "🔎 Code Review"
     st.session_state.app_mode = st.radio(
-        "Mode", ["💬 Chat", "🔎 Code Review", "📊 Metrics"],
-        index=0 if st.session_state.app_mode.startswith("💬") else 1 if "Review" in st.session_state.app_mode else 2,
+        "Mode", ["🔎 Code Review", "📊 Metrics", "💬 Discussion"],
+        index=0 if "Review" in st.session_state.app_mode else 1 if "Metrics" in st.session_state.app_mode else 2,
         label_visibility="collapsed",
     )
 
-    if st.session_state.app_mode != "💬 Chat":
-        st.stop()  # skip chat UI, render code review section below
+    if st.session_state.app_mode != "💬 Discussion":
+        st.stop()  # skip chat UI, render code review/metrics below
 
     if not st.session_state.backend_ok:
         st.error("⚠️ Backend unreachable")
@@ -422,7 +422,7 @@ with col2:
 # ======================================================================
 # Code Review Tab (Product Line 2)
 # ======================================================================
-if st.session_state.get("app_mode", "💬 Chat") == "🔎 Code Review":
+if st.session_state.get("app_mode", "🔎 Code Review") == "🔎 Code Review":
     st.title("🔎 Code Review")
     st.caption("Claude Code (Architecture) + Codex CLI (Implementation) · Dual-track review")
 
@@ -514,10 +514,46 @@ if st.session_state.get("app_mode", "💬 Chat") == "🔎 Code Review":
 
         st.download_button("Download MD", data=report.markdown, file_name=f"review_{pr_title[:30]}.md")
 
+        # --- Discussion Panel (审查讨论区) ---
+        st.divider()
+        st.subheader("💬 Discussion")
+        st.caption("Use @commands: `@claude fix issue #1` · `@codex add test` · `@all re-review` · `@claude explain why P1`")
+
+        if "cr_discussion" not in st.session_state:
+            st.session_state.cr_discussion = []
+
+        # Show discussion history
+        for msg in st.session_state.cr_discussion:
+            role_icon = {"user": "👤", "claude": "🤖", "codex": "🛠️", "system": "⚙️"}.get(msg.get("role", "user"), "💬")
+            with st.chat_message(msg.get("role", "user")):
+                st.markdown(f"**{role_icon} {msg.get('sender', 'unknown')}**: {msg.get('content', '')}")
+
+        # Discussion input
+        disc_input = st.chat_input("Discuss the review or use @commands...", key="cr_disc_input")
+        if disc_input:
+            # Add user message
+            st.session_state.cr_discussion.append({"role": "user", "sender": "You", "content": disc_input})
+
+            # Mock response based on @command
+            msg_lower = disc_input.lower()
+            if "@claude fix" in msg_lower:
+                response = "🔧 **Claude Code**: I'll generate a fix for this issue.\n\n```python\n# Suggested fix based on review findings\ndef validate_input(data):\n    if data is None:\n        raise ValueError('Input cannot be None')\n    # Add Pydantic validation\n    return ValidatedInput(**data)\n```"
+            elif "@codex test" in msg_lower or "@codex add test" in msg_lower:
+                response = "🧪 **Codex CLI**: Generated test case:\n\n```python\nimport pytest\nfrom src.auth import validate_input\n\ndef test_validate_input_with_none():\n    with pytest.raises(ValueError):\n        validate_input(None)\n\ndef test_validate_input_valid():\n    result = validate_input({'user': 'test'})\n    assert result is not None\n```"
+            elif "@all re-review" in msg_lower:
+                response = "🔄 **System**: Re-review triggered. All agents will re-examine the PR. *(Mock mode — no actual re-review)*"
+            elif "@claude explain" in msg_lower:
+                response = "📖 **Claude Code**: This issue was flagged as high priority because it affects the authentication flow, which is a critical security boundary. Any unvalidated input here could lead to injection attacks or authentication bypass."
+            else:
+                response = "💬 **System**: Discussion noted. Use `@claude fix`, `@codex test`, `@all re-review`, or `@claude explain` for specific actions."
+
+            st.session_state.cr_discussion.append({"role": "claude" if "claude" in msg_lower else "codex" if "codex" in msg_lower else "system", "sender": "AgentHub", "content": response})
+            st.rerun()
+
 # ======================================================================
 # Metrics Tab (Product Line 2)
 # ======================================================================
-if st.session_state.get("app_mode", "💬 Chat") == "📊 Metrics":
+if st.session_state.get("app_mode", "🔎 Code Review") == "📊 Metrics":
     st.title("📊 Metrics Dashboard")
     st.caption("DORA Core 4 + AgentHub 7 Metrics")
 
