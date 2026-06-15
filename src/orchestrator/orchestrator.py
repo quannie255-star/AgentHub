@@ -42,6 +42,16 @@ from src.core.schema import (
     TaskStatus,
 )
 from src.core.message_bus import MessageBus
+from src.core.review_schema import (
+    AgentReviewResult,
+    AgentSource,
+    FileChange,
+    PullRequest,
+    ReviewIssue,
+    ReviewReport,
+    ReviewScore,
+    ReviewStatus,
+)
 from src.orchestrator.agent_router import AgentRouter, RoutingResult
 from src.orchestrator.task_parser import TaskParser, extract_mentions
 
@@ -329,6 +339,105 @@ class Orchestrator:
 
             if task_store is not None:
                 task_store[task.task_id] = task
+
+    # ------------------------------------------------------------------
+    # Code Review pipeline (Product Line 2)
+    # ------------------------------------------------------------------
+
+    async def run_code_review(
+        self,
+        pr_data: dict,
+        selected_agents: list[str] | None = None,
+    ) -> ReviewReport:
+        """Execute full code review pipeline.
+
+        Args:
+            pr_data: Dict with PR fields (title, files, etc.)
+            selected_agents: Optional agent list for @mention override.
+
+        Returns:
+            ReviewReport with merged issues, score, and rendered markdown.
+        """
+        # 1. Build PullRequest
+        files = [
+            FileChange(
+                path=f.get("path", ""),
+                additions=f.get("additions", 0),
+                deletions=f.get("deletions", 0),
+                language=f.get("language", ""),
+            )
+            for f in pr_data.get("files", pr_data.get("changed_files", []))
+        ]
+        pr = PullRequest(
+            title=pr_data.get("title", "Untitled PR"),
+            description=pr_data.get("description", ""),
+            author=pr_data.get("author", "unknown"),
+            branch=pr_data.get("branch", pr_data.get("source_branch", "")),
+            target_branch=pr_data.get("target_branch", "main"),
+            repository=pr_data.get("repository", pr_data.get("repo", "")),
+            files=files,
+        )
+
+        # 2. Route: which agents to use?
+        agents = AgentRouter.route_review_task(pr, selected_agents)
+
+        # 3. Parallel review: run each adapter's review_code()
+        results: list[AgentReviewResult] = []
+        for agent in agents:
+            try:
+                adapter = await self._registry.get(agent.value)
+            except Exception:
+                continue
+
+            if hasattr(adapter, "review_code"):
+                result = await adapter.review_code(pr)
+                results.append(result)
+
+        # 4. Merge + deduplicate
+        merged_issues = self._merge_review_results(results)
+
+        # 5. Score
+        score = ReviewScore.from_issues(merged_issues)
+
+        # 6. Quality gate
+        if score.passes_quality_gate:
+            if score.auto_approvable:
+                status = ReviewStatus.AUTO_APPROVED
+            else:
+                status = ReviewStatus.PASSED
+        else:
+            status = ReviewStatus.FAILED
+
+        # 7. Build report
+        report = ReviewReport(
+            pr_id=pr.id,
+            pr_title=pr.title,
+            status=status,
+            agent_results=results,
+            issues=merged_issues,
+            score=score,
+            executive_summary=(
+                f"Automated review by {', '.join(a.value for a in agents)}. "
+                f"Found {len(merged_issues)} issues "
+                f"({score.critical_count} critical, {score.high_count} high)."
+            ),
+        )
+        report.render_markdown()
+        return report
+
+    @staticmethod
+    def _merge_review_results(results: list[AgentReviewResult]) -> list[ReviewIssue]:
+        """Merge agent results: deduplicate by (file_path, category, title)."""
+        seen: dict[str, ReviewIssue] = {}
+        for result in results:
+            for issue in result.issues:
+                key = f"{issue.file_path or ''}|{issue.category.value}|{issue.title[:50]}"
+                if key not in seen or issue.priority.value < seen[key].priority.value:
+                    seen[key] = issue
+        return sorted(
+            seen.values(),
+            key=lambda x: (x.priority.value, x.category.value),
+        )
 
     # ------------------------------------------------------------------
     # Helpers
