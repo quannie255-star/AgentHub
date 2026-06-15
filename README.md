@@ -4,10 +4,16 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-FF4B4B)](https://streamlit.io/)
-[![Tests](https://img.shields.io/badge/tests-293%20passed-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-306%20passed-brightgreen)](tests/)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/quannie255-star/AgentHub)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**AgentHub** is an IM-style multi-AI-agent collaboration platform. Users describe complex tasks in natural language, and the system automatically decomposes them into sub-tasks, routes each to the most capable AI agent (Claude Code, Codex CLI, or custom agents), and streams results back in real time.
+**AgentHub** is an IM-style multi-AI-agent collaboration platform with two product lines:
+
+| Product Line | Mode | Description |
+|-------------|------|-------------|
+| 💬 **Chat** | General | IM-style multi-agent chat — task decomposition + @mention routing + SSE streaming |
+| 🔎 **Code Review** | New | AI-powered code review — Claude (architecture) + Codex (implementation) dual-track + quality gate + DORA metrics |
 
 > Think: Slack for AI agents — you manage a team of AI assistants from a single chat interface.
 
@@ -62,6 +68,37 @@ graph TB
     style 编排层 fill:#e8f5e9,stroke:#388e3c
     style Agent层 fill:#f3e5f5,stroke:#7b1fa2
     style 基础设施层 fill:#fce4ec,stroke:#c62828
+```
+
+## Code Review Quick Start (Mock Mode — no API key needed)
+
+```python
+import asyncio
+from src.adapters.registry import AdapterRegistry
+from src.adapters.claude_adapter import ClaudeCodeAdapter
+from src.adapters.codex_adapter import CodexCLIAdapter
+from src.orchestrator.orchestrator import Orchestrator
+
+async def main():
+    registry = AdapterRegistry()
+    await registry.register(ClaudeCodeAdapter(api_key=""))
+    await registry.register(CodexCLIAdapter(api_key=""))
+    orch = Orchestrator(registry=registry)
+
+    report = await orch.run_code_review({
+        "title": "Fix JWT token refresh bug",
+        "description": "Fixes token validation on each request.",
+        "files": [
+            {"path": "src/auth.py", "additions": 30, "deletions": 8, "language": "python"},
+            {"path": "tests/test_auth.py", "additions": 45, "deletions": 0, "language": "python"},
+        ],
+    })
+
+    print(f"Score: {report.score.overall}/10")
+    print(f"Issues: {len(report.issues)}")
+    print(f"Quality Gate: {report.status.value}")
+
+asyncio.run(main())
 ```
 
 ## Quick Start
