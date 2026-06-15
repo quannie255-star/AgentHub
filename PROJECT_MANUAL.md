@@ -683,4 +683,88 @@ class SqliteMessageRepository(MessageRepository): ...
 3. **迁移到 React**：当用户量增长到需要多租户时，Streamlit 可以用 `src/ui/api_client.py` 对接 React 前端（客户端已独立封装）
 
 ---
-> 最后更新: 2026-06-10 | 测试数: 293 | 代码行数: ~8,200 | Python 3.11+
+
+## 八、Code Review 产品线（v0.2.0 新增）
+
+### 8.1 一句话定位
+
+在 AgentHub 已有的多 Agent 协作架构上，构建 **AI 驱动的代码审查中心** — 提交 PR → Claude + Codex 双轨并行审查 → 合并去重 → 质量门禁 → DORA 指标追踪。
+
+### 8.2 核心流程
+
+```
+用户输入 PR（UI / API / @mention 触发）
+    │
+    ▼
+TaskParser.is_code_review_task() — 关键词检测
+    │
+    ▼
+AgentRouter.route_review_task() — 智能路由
+    ├─ < 50 行 → Codex 单 Agent
+    ├─ 50-200 行 → Claude + Codex 双轨
+    ├─ 配置文件 → Codex（侧重格式）
+    └─ 核心模块 → Claude（侧重架构+安全）
+    │
+    ▼
+ClaudeCodeAdapter.review_code() [并行]
+    └─ 架构/安全/性能/API 契约
+CodexCLIAdapter.review_code() [并行]
+    └─ Bug/测试覆盖/代码风格/错误处理
+    │
+    ▼
+Orchestrator._merge_review_results() — 去重 + 排序
+    │
+    ▼
+ReviewScore.from_issues() — 六维评分
+    │
+    ▼
+Quality Gate 判定
+    ├─ PASSED: overall≥6.0 + security≥7.0 + 零 critical
+    ├─ AUTO_APPROVED: overall≥8.5 + 零 critical + ≤1 high
+    └─ FAILED: 回退到对应 Agent 重新审查
+    │
+    ▼
+ReviewReport.render_markdown() — 8 章节报告
+```
+
+### 8.3 新增文件清单
+
+| 文件 | 职责 |
+|------|------|
+| `src/core/review_schema.py` | 8 个 Pydantic 模型（PullRequest、ReviewIssue、ReviewScore、ReviewReport、DORAMetrics、AgentHubMetrics 等） |
+| `src/api/routes/review.py` | 5 个 API 端点（submit/status/stream/report/metrics） |
+| `tests/test_code_review.py` | 13 条测试（模型 + Mock 适配器 + 端到端流水线） |
+
+### 8.4 修改文件清单
+
+| 文件 | 新增内容 |
+|------|---------|
+| `src/adapters/claude_adapter.py` | `review_code()` + `_build_review_prompt()` + `_mock_review()` |
+| `src/adapters/codex_adapter.py` | 同上（对称实现） |
+| `src/orchestrator/task_parser.py` | `is_code_review_task()` + `parse_review_target()` |
+| `src/orchestrator/agent_router.py` | `route_review_task()`（PR 大小/类型/影响范围路由） |
+| `src/orchestrator/orchestrator.py` | `run_code_review()` + `_merge_review_results()` |
+| `src/ui/app.py` | 三个 Mode（Chat / Code Review / Metrics） |
+| `config/settings.yaml` | `code_review` + `metrics` 配置块 |
+
+### 8.5 评估指标体系
+
+**DORA 核心四指标**（证明业务价值）：
+- 部署频率、交付周期、变更失败率、MTTR
+- 自动分级：Elite / High / Medium / Low
+
+**AgentHub 专属七指标**（驱动产品优化）：
+- AI Review Coverage（>90%）
+- Issue Detection Rate（>85%）
+- Fix Adoption Rate（>60%）
+- Human Review Time Saved（>75%）
+- Multi-Agent Efficiency Gain（>40%）
+- Agent Utilization Balance（<20%）
+- Cost Per Review（<$2）
+
+### 8.6 Mock 模式
+
+无 API Key 时每个 Adapter 自动生成 3 个合成审查问题，覆盖架构/安全/性能/测试/风格等维度。完整流水线可演示，无需任何外部依赖。
+
+---
+> 最后更新: 2026-06-15 | 测试数: 306 | 代码行数: ~10,000 | v0.2.0 | Python 3.11+

@@ -45,7 +45,7 @@ graph TD
     end
 
     subgraph CORE["Core Layer"]
-        SCHEMA["Schema<br/>20 Pydantic V2 models"]
+        SCHEMA["Schema<br/>20 base + 8 Code Review<br/>28 Pydantic V2 models"]
         MB["MessageBus<br/>async pub/sub<br/>asyncio.Queue per session"]
         SM["SessionManager<br/>CRUD + invariants<br/>(group ≥ 2 participants)"]
         REPO["Repository<br/>SQLite (aiosqlite)<br/>+ swap to PostgreSQL"]
@@ -210,3 +210,56 @@ graph TD
 ---
 
 > Diagrams rendered with Mermaid. View on GitHub for live rendering.
+
+---
+
+## Code Review Pipeline (v0.2.0)
+
+```mermaid
+graph TD
+    subgraph INPUT["Input"]
+        UI_CR["Streamlit UI<br/>Code Review Tab"]
+        API_CR["POST /api/review"]
+        MENTION["@mention in Chat<br/>@claude review PR"]
+    end
+
+    subgraph DETECT["Detection"]
+        PARSER_CR["TaskParser<br/>is_code_review_task()<br/>parse_review_target()"]
+    end
+
+    subgraph ROUTE["Routing"]
+        ROUTER_CR["AgentRouter<br/>route_review_task()<br/>size/type/scope → agents"]
+    end
+
+    subgraph REVIEW["Dual-Track Review"]
+        CLAUDE_R["ClaudeCodeAdapter<br/>review_code()<br/>Architecture · Security · Perf"]
+        CODEX_R["CodexCLIAdapter<br/>review_code()<br/>Bugs · Tests · Style"]
+    end
+
+    subgraph MERGE["Merge & Score"]
+        DEDUP["_merge_review_results()<br/>dedup by file+cat+title"]
+        SCORE["ReviewScore.from_issues()<br/>6-dim weighted scoring"]
+    end
+
+    subgraph GATE["Quality Gate"]
+        QG["passes_quality_gate?<br/>min: overall≥6.0 security≥7.0<br/>auto: overall≥8.5 + ≤1 high"]
+    end
+
+    subgraph OUTPUT["Output"]
+        REPORT["ReviewReport<br/>render_markdown()<br/>8-section report"]
+        METRICS["Metrics<br/>DORA 4 + AgentHub 7"]
+    end
+
+    INPUT --> DETECT
+    DETECT --> ROUTE
+    ROUTE --> CLAUDE_R
+    ROUTE --> CODEX_R
+    CLAUDE_R --> MERGE
+    CODEX_R --> MERGE
+    DEDUP --> SCORE
+    SCORE --> QG
+    QG -->|"PASSED"| REPORT
+    QG -->|"AUTO_APPROVED"| REPORT
+    QG -.->|"FAILED → re-review"| ROUTE
+    REPORT --> METRICS
+```

@@ -6,7 +6,7 @@
 
 ## 一、30 秒电梯演讲
 
-> "我做的是一个**多 AI Agent 协作平台**，叫 AgentHub。核心解决的问题是：传统 AI 编程助手是 1v1 对话，你只能跟一个 Agent 聊。AgentHub 让你像管团队一样调度多个 AI Agent——你在聊天界面用自然语言描述复杂任务，系统自动拆解成子任务，根据能力路由给最合适的 Agent 并行执行，然后通过 SSE 实时流把每个 Agent 的结果推回来。技术栈 Python FastAPI + Streamlit + Docker，293 条测试，完整的 CI/CD 流水线。"
+> "我做的是一个**多 AI Agent 协作平台**，叫 AgentHub，有两条产品线。第一条是 IM 风格的多 Agent 聊天——你像管团队一样调度 Claude Code、Codex CLI 等 AI Agent，系统自动拆任务、智能路由、SSE 实时流推送。第二条是今年新加的 **AI 代码审查中心**——提交 PR 后 Claude 做架构和安全审查、Codex 做实现和测试审查，双轨并行输出结构化报告，自带质量门禁和 DORA 指标面板。技术栈 Python FastAPI + Streamlit + Docker，306 条测试，Mock 模式无需 API Key 即可完整演示。"
 
 ---
 
@@ -214,18 +214,24 @@ AgentHub 定位是开发者工具 + MVP 阶段 → Streamlit 更合适。API 层
 4. **并行执行**：当前顺序执行，改为 `asyncio.gather()`（已预留 `on_progress` 支持）
 5. **Registry 增强**：加健康检查定期探测、连接池、负载均衡
 
-### Q10: 测试策略？
+### Q10: 为什么加了 Code Review 产品线？
 
-**回答**: 293 条测试覆盖四个层次：
+**回答**: 从通用工具到深度场景的升级。通用聊天的问题是用户粘性低——"什么都能做"意味着"什么都做不深"。Code Review 是一个被验证的市场痛点：AI 生成代码的审查等 30h（人类的 4.6×），PR 接受率仅 32.7%。而 AgentHub 已有架构（多 Agent 路由、SSE、会话管理）天然适合做这个场景。
+
+**关键决策**: 不推倒重来，而是复用 4 个核心模块（TaskParser、AgentRouter、MessageBus、Session），新增一条平行的产品线。
+
+### Q11: 测试策略？
+
+**回答**: 306 条测试覆盖四个层次：
 
 | 层次 | 数量 | 覆盖内容 |
 |------|------|----------|
-| 单元测试 | ~220 | Schema 模型、Config 加载、Session CRUD、Keyword matching |
-| 集成测试 | ~40 | SQLite 读写、Adapter Registry、Orchestrator 完整流程 |
+| 单元测试 | ~230 | Schema 模型、Config 加载、Session CRUD、Keyword matching、Code Review 模型 |
+| 集成测试 | ~40 | SQLite 读写、Adapter Registry、Orchestrator 完整流程、双轨审查流水线 |
 | API 测试 | 38 | 8 个端点所有 HTTP 方法、422 验证、CORS、SSE |
-| 端到端 | 16 | 真实 uvicorn server + HTTP client 完整链路 |
+| 端到端 | 16 | 真实 uvicorn server + HTTP client 完整链路 + Mock 模式全链路 |
 
-**关键**: 所有降级路径都有测试（Agent 失败、超时、fallback、空输入）。
+**关键**: 所有降级路径都有测试。Mock 模式让无 API Key 也能跑全流程。
 
 ---
 
@@ -288,13 +294,15 @@ curl http://localhost:8000/health
 
 | 亮点 | 一句话 |
 |------|--------|
-| **Schema-first 开发** | 20 个 Pydantic V2 模型，所有模块共享，避免接口不一致 |
+| **Schema-first 开发** | 28 个 Pydantic V2 模型（20 通用 + 8 Code Review），所有模块共享 |
+| **双产品线架构** | Chat + Code Review 共享同一套编排引擎，新增场景只需扩 Agent |
 | **策略模式 Adapter** | ABC 抽象基类，新增 Agent 只需实现 5 个方法 |
+| **双轨并行审查** | Claude（架构/安全）+ Codex（实现/测试）并行，去重合并 |
+| **质量门禁引擎** | 三层判定（通过/自动批准/失败路由）+ DORA 四指标 |
+| **Mock 模式** | 无 API Key 完整运行，生成合成审查结果直接演示 |
 | **Repository 模式** | 接口与存储解耦，测试用 Memory，生产用 SQLite，可换 PostgreSQL |
 | **pub/sub 解耦** | Orchestrator 不直接通知 UI，通过 MessageBus，松耦合 |
 | **SSE 二阶段** | replay 防止事件丢失 + live 实时推送 |
-| **Lifespan 模式** | 避免 `on_event` 弃用警告，启动时注入依赖 |
-| **中间件栈** | CORS → RequestID → Logging → Exception Handler，每层独立测试 |
 | **Docker 双容器** | 前后端分离，内部网络，各自 health check |
 | **CI 四阶段** | test + lint + docker build + integration smoke，全自动 |
 
@@ -344,13 +352,13 @@ curl http://localhost:8000/health
 
 ```
 项目名:    AgentHub
-一句话:    多 Agent 协作平台 = 聊天界面 + 任务拆解 + 智能路由 + SSE 实时流
+一句话:    多 Agent 协作平台 = IM 聊天 + AI 代码审查，双产品线
 技术栈:    Python 3.11 / FastAPI / Streamlit / Pydantic V2 / Docker
-测试:      293 passed
-代码量:    ~8,200 lines / 34 files / 67 classes
-核心模式:  Schema-first / Strategy / Repository / pub-sub
+测试:      306 passed（293 原有 + 13 Code Review）
+代码量:    ~10,000 lines / 40 files / 75+ classes
+核心模式:  Schema-first / 双产品线 / Strategy / Repository / pub-sub
 容错:      retry(3×) → fallback → graceful degradation
-特色:      SSE 二阶段 / daemon 线程伪实时 / 中间件栈 / 双容器部署
+特色:      双轨审查 / 质量门禁 / DORA 指标 / SSE 二阶段 / Mock 模式 / 双容器部署
 ```
 
 ---
