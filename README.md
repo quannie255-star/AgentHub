@@ -15,24 +15,53 @@
 
 ## Architecture
 
-```
-User (Streamlit UI)
-  │  "1. fix login bug  2. write tests  3. deploy"
-  ▼
-POST /api/chat ──► Orchestrator
-                    ├── TaskParser     (decompose into 3 sub-tasks)
-                    ├── AgentRouter    (keyword → action → agent)
-                    └── Executor       (retry 3×, fallback, timeout 60s)
-                         │
-                         ├── ClaudeCodeAdapter  ──► claude CLI
-                         ├── CodexCLIAdapter    ──► codex CLI
-                         └── (extensible)
-                              │
-                              ▼
-                         MessageBus (pub/sub per task)
-                              │
-                              ▼
-                    SSE Stream ──► UI (real-time agent responses)
+```mermaid
+graph TB
+    subgraph 用户层["👤 用户层"]
+        UI["🖥️ Streamlit Chat UI<br/>多会话管理 · Agent多选 · SSE实时渲染"]
+    end
+
+    subgraph API层["🌐 API 层"]
+        API["FastAPI + Uvicorn<br/>━━━━━━━━━━━━<br/>• /api/chat/ → 任务分发<br/>• /api/chat/tasks/{id}/stream → SSE推送<br/>• /api/sessions/ → 会话管理"]
+    end
+
+    subgraph 编排层["🎯 编排层"]
+        TP["TaskParser<br/>━━━━━━━━━━━━<br/>• 编号列表解析<br/>• 逗号分隔解析<br/>• @-mention 提取"]
+        AR["AgentRouter<br/>━━━━━━━━━━━━<br/>• 关键词匹配路由<br/>• LLM 语义路由<br/>• 3次重试 + fallback"]
+        ORCH["Orchestrator<br/>协调调度"]
+    end
+
+    subgraph Agent层["🤖 Agent 适配层"]
+        direction LR
+        BASE["AbstractAgentAdapter<br/>抽象基类（3个方法）"]
+        CLAUDE["ClaudeCodeAdapter<br/>asyncio subprocess"]
+        CODEX["CodexCLIAdapter<br/>asyncio subprocess"]
+        REGISTRY["AdapterRegistry<br/>插件注册中心"]
+    end
+
+    subgraph 基础设施层["⚙️ 基础设施"]
+        direction LR
+        MB["📨 MessageBus<br/>asyncio.Queue per session<br/>发布/订阅"]
+        REPO["💾 Repository<br/>aiosqlite<br/>可替换存储"]
+        TOOLS["🔧 工具集<br/>Diff Viewer · Preview<br/>Deploy"]
+    end
+
+    UI -->|"HTTP + SSE"| API
+    API --> ORCH
+    ORCH --> TP
+    ORCH --> AR
+    AR --> BASE
+    BASE --> CLAUDE
+    BASE --> CODEX
+    REGISTRY --> BASE
+    MB -.->|事件通知| API
+    REPO -.->|持久化| API
+
+    style 用户层 fill:#e1f5fe,stroke:#0288d1
+    style API层 fill:#fff3e0,stroke:#f57c00
+    style 编排层 fill:#e8f5e9,stroke:#388e3c
+    style Agent层 fill:#f3e5f5,stroke:#7b1fa2
+    style 基础设施层 fill:#fce4ec,stroke:#c62828
 ```
 
 ## Quick Start
