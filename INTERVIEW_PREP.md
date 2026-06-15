@@ -6,7 +6,7 @@
 
 ## 一、30 秒电梯演讲
 
-> "我做的是一个**多 AI Agent 协作平台**，叫 AgentHub，有两条产品线。第一条是 IM 风格的多 Agent 聊天——你像管团队一样调度 Claude Code、Codex CLI 等 AI Agent，系统自动拆任务、智能路由、SSE 实时流推送。第二条是今年新加的 **AI 代码审查中心**——提交 PR 后 Claude 做架构和安全审查、Codex 做实现和测试审查，双轨并行输出结构化报告，自带质量门禁和 DORA 指标面板。技术栈 Python FastAPI + Streamlit + Docker，306 条测试，Mock 模式无需 API Key 即可完整演示。"
+> "我做的是一个 **AI 代码审查协作中枢**，叫 AgentHub。和 Cursor/Claude Code 这些通用 AI 工具不同，AgentHub 的核心是**编排多个 Agent 协同完成有质量标准的任务**。提交 PR 后，系统自动路由——Claude Code 负责架构和安全审查，Codex CLI 负责实现和测试审查，双轨并行执行，结果自动合并去重、六维评分、质量门禁判定。报告下方有讨论区，工程师可以用 @claude fix、@codex test、@all re-review 这些指令和 Agent 协作修问题。技术栈 Python FastAPI + Streamlit + asyncio MessageBus + Docker，306 条测试，Mock 模式无需 API Key 即可完整演示。"
 
 ---
 
@@ -214,11 +214,9 @@ AgentHub 定位是开发者工具 + MVP 阶段 → Streamlit 更合适。API 层
 4. **并行执行**：当前顺序执行，改为 `asyncio.gather()`（已预留 `on_progress` 支持）
 5. **Registry 增强**：加健康检查定期探测、连接池、负载均衡
 
-### Q10: 为什么加了 Code Review 产品线？
+### Q10: 为什么从通用 Chat 转型为 Code Review 协作中枢？
 
-**回答**: 从通用工具到深度场景的升级。通用聊天的问题是用户粘性低——"什么都能做"意味着"什么都做不深"。Code Review 是一个被验证的市场痛点：AI 生成代码的审查等 30h（人类的 4.6×），PR 接受率仅 32.7%。而 AgentHub 已有架构（多 Agent 路由、SSE、会话管理）天然适合做这个场景。
-
-**关键决策**: 不推倒重来，而是复用 4 个核心模块（TaskParser、AgentRouter、MessageBus、Session），新增一条平行的产品线。
+**回答**: 通用 Chat 的问题是和 Cursor/Claude Code 直接竞争——"什么都能做"意味着"什么都做不深"。Code Review 是验证过的市场痛点（AI PR 审查等 30h vs 人类 6.5h，接受率仅 32.7%），而 AgentHub 的多 Agent 编排架构天然适合——不是替代 Codex/Claude，而是让它们协作。Chat 功能降级为审查报告的讨论区（@claude fix、@codex test），让"聊天"服务于"审查"这个有质量标准的任务。
 
 ### Q11: 测试策略？
 
@@ -243,49 +241,25 @@ AgentHub 定位是开发者工具 + MVP 阶段 → Streamlit 更合适。API 层
 uvicorn src.api.app:create_app --factory --reload --port 8000
 ```
 
-等待输出 `Application startup complete.`
-
-### 浏览器：
-
-打开 `http://localhost:8000/docs`
-
-目标：展示 Swagger 自动生成的 API 文档。
-
-### 终端 2 (测试 API)：
-
-```bash
-# 健康检查
-curl -s http://localhost:8000/health | python -m json.tool
-
-# 创建会话
-curl -s -X POST http://localhost:8000/api/sessions/ \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Demo","participants":["interviewer"]}'
-# → 记下 session_id
-
-# 发送多任务消息
-curl -s -X POST http://localhost:8000/api/chat/ \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"<ID>","content":"1. design login API\n2. implement login\n3. write tests"}'
-
-# SSE 流式
-curl -N http://localhost:8000/api/chat/tasks/<TASK_ID>/stream
-```
-
-### Streamlit (如果时间允许)：
+### 终端 2 (前端)：
 
 ```bash
 streamlit run src/ui/app.py
 # → localhost:8501
 ```
 
-展示：创建会话 → 发多任务消息 → Agent 逐个返回（流式效果）
+### Demo 流程：
 
-### Docker (最后，展示工程能力)：
+1. **Code Review（主页）**：输入 PR 标题 + 文件列表 → Start Review → 展示评分仪表盘 + 问题列表 + 质量门禁
+2. **Discussion（审查报告下方）**：输入 `@claude fix issue #1` → 展示 Claude 返回的修复代码；输入 `@codex test` → 展示生成的测试用例
+3. **Metrics Tab**：展示 DORA 指标和 AgentHub 指标卡片
+4. **API 文档**（可选）：打开 `localhost:8000/docs` 展示 Swagger
+
+### 终端 3 (测试，展示 CI)：
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build -d
-curl http://localhost:8000/health
+python -m pytest tests/ -q
+# → 306 passed
 ```
 
 ---
@@ -352,13 +326,14 @@ curl http://localhost:8000/health
 
 ```
 项目名:    AgentHub
-一句话:    多 Agent 协作平台 = IM 聊天 + AI 代码审查，双产品线
-技术栈:    Python 3.11 / FastAPI / Streamlit / Pydantic V2 / Docker
-测试:      306 passed（293 原有 + 13 Code Review）
+一句话:    AI 代码审查协作中枢 = 提交 PR → 双轨审查 → 质量门禁 → 讨论修复
+技术栈:    Python 3.11 / FastAPI / Streamlit / Pydantic V2 / Docker / asyncio
+测试:      306 passed
 代码量:    ~10,000 lines / 40 files / 75+ classes
-核心模式:  Schema-first / 双产品线 / Strategy / Repository / pub-sub
+核心模式:  Schema-first / 双轨并行 / Strategy / Repository / pub-sub
 容错:      retry(3×) → fallback → graceful degradation
-特色:      双轨审查 / 质量门禁 / DORA 指标 / SSE 二阶段 / Mock 模式 / 双容器部署
+特色:      多 Agent 编排 / 审查讨论区 @command / DORA+AgentHub 指标 / Mock 模式
+差异化:    不是替代 Claude/Codex，而是让它们协作完成有质量标准的任务
 ```
 
 ---

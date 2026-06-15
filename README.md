@@ -5,15 +5,18 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-FF4B4B)](https://streamlit.io/)
 [![Tests](https://img.shields.io/badge/tests-306%20passed-brightgreen)](tests/)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/quannie255-star/AgentHub)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/quannie255-star/AgentHub)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**AgentHub** is an IM-style multi-AI-agent collaboration platform with two product lines:
+**AgentHub** is an AI-powered code review collaboration hub. Submit a PR → Claude (architecture + security) and Codex (implementation + tests) run dual-track parallel review → merge + dedup → 6-dimension score → quality gate → DORA metrics. Built-in discussion panel lets engineers discuss findings and trigger actions with @commands.
 
-| Product Line | Mode | Description |
-|-------------|------|-------------|
-| 💬 **Chat** | General | IM-style multi-agent chat — task decomposition + @mention routing + SSE streaming |
-| 🔎 **Code Review** | New | AI-powered code review — Claude (architecture) + Codex (implementation) dual-track + quality gate + DORA metrics |
+### Mode Overview
+
+| Mode | Description |
+|------|-------------|
+| 🔎 **Code Review** | Main interface — PR submission, dual-track review, score dashboard, quality gate |
+| 📊 **Metrics** | DORA Core 4 + AgentHub 7 metrics dashboard with targets |
+| 💬 **Discussion** | Per-review discussion panel — `@claude fix`, `@codex test`, `@all re-review` |
 
 > Think: Slack for AI agents — you manage a team of AI assistants from a single chat interface.
 
