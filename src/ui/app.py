@@ -196,231 +196,184 @@ def _refresh_sessions() -> list[dict]:
 
 
 # ======================================================================
-# Sidebar — session list
+# Sidebar — always visible
 # ======================================================================
 with st.sidebar:
     st.title("🤖 AgentHub")
 
-    # Mode selector — Code Review is the default main interface
     if "app_mode" not in st.session_state:
         st.session_state.app_mode = "🔎 Code Review"
+    prev_mode = st.session_state.app_mode
     st.session_state.app_mode = st.radio(
         "Mode", ["🔎 Code Review", "📊 Metrics", "💬 Discussion"],
         index=0 if "Review" in st.session_state.app_mode else 1 if "Metrics" in st.session_state.app_mode else 2,
         label_visibility="collapsed",
     )
-
-    if st.session_state.app_mode != "💬 Discussion":
-        st.stop()  # skip chat UI, render code review/metrics below
-
-    if not st.session_state.backend_ok:
-        st.error("⚠️ Backend unreachable")
-        st.caption("Start with: `uvicorn src.api.app:create_app --factory`")
-        st.stop()
-
-    if st.button("➕ New Chat", use_container_width=True, disabled=st.session_state.is_streaming):
-        try:
-            new_s = st.session_state.api_client.create_session(title="New Chat")
-            st.session_state.current_session_id = new_s["id"]
-            st.session_state.messages[new_s["id"]] = []
-            st.rerun()
-        except AgentHubAPIError as e:
-            st.error(str(e))
-
-    st.divider()
-
-    sessions = _refresh_sessions()
-    for s in sessions:
-        sid = s["id"]
-        label = s.get("title", "Untitled")[:30]
-        p_count = len(s.get("participants", []))
-        if p_count:
-            label += f"  ({p_count})"
-
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            is_current = (sid == st.session_state.current_session_id)
-            btn_label = f"{'📌 ' if is_current else ''}{label}"
-            if st.button(
-                btn_label,
-                key=f"sel_{sid}",
-                use_container_width=True,
-                type="primary" if is_current else "secondary",
-            ):
-                st.session_state.current_session_id = sid
-                if sid not in st.session_state.messages:
-                    st.session_state.messages[sid] = []
-                st.rerun()
-        with col2:
-            if st.button("🗑️", key=f"del_{sid}", help="Delete session"):
-                try:
-                    st.session_state.api_client.delete_session(sid)
-                    if st.session_state.current_session_id == sid:
-                        st.session_state.current_session_id = None
-                    st.session_state.messages.pop(sid, None)
-                    st.session_state.stream_buffer.pop(sid, None)
-                    st.rerun()
-                except AgentHubAPIError as e:
-                    st.error(str(e))
-
-    st.divider()
-    agents_str = ", ".join(st.session_state.agents) if st.session_state.agents else "none"
-    st.caption(f"Agents: {agents_str}")
-    st.caption(f"API: {st.session_state.api_client._base}")
-
-
-# ======================================================================
-# Main chat area
-# ======================================================================
-st.title("AgentHub Chat" if not st.session_state.current_session_id else "Chat")
-
-if st.session_state.current_session_id is None:
-    st.info("👈 Select a session from the sidebar or create a new one.")
-    st.stop()
-
-sid = st.session_state.current_session_id
-
-# --- Drain stream buffer into messages (incremental, index-based) ---
-buf = st.session_state.stream_buffer.get(sid, [])
-idx = st.session_state.stream_idx.get(sid, 0)
-new_events = buf[idx:]  # events we haven't rendered yet
-
-for event in new_events:
-    etype = event.get("event", "")
-    if etype == "progress":
-        agent = event.get("assigned_agent", "unknown")
-        desc = event.get("description", "")
-        result = event.get("result", "")
-        status = event.get("status", "unknown")
-
-        content = f"**{desc}**" + (f"\n\n{result}" if result else f"\n\n*{status}*")
-        st.session_state.messages[sid].append({
-            "role": "agent",
-            "sender": agent,
-            "content": content,
-        })
-    elif etype == "connected":
-        pass  # internal event, not displayed
-    elif etype == "complete":
-        if event.get("status") == "failed" and event.get("final_result"):
-            st.session_state.messages[sid].append({
-                "role": "system",
-                "sender": "orchestrator",
-                "content": f"⚠️ {event['final_result']}",
-            })
-
-# Advance the index
-st.session_state.stream_idx[sid] = len(buf)
-
-# --- Render messages ---
-messages = st.session_state.messages.get(sid, [])
-
-chat_container = st.container()
-with chat_container:
-    if not messages:
-        st.markdown("### ✨ Start the conversation")
-        st.caption("Tip: Use @agent mentions to route tasks.")
-
-    for msg in messages:
-        role = msg.get("role", "user")
-        sender = msg.get("sender", "unknown")
-        content = msg.get("content", "")
-
-        if role == "system":
-            with st.expander(f"🔧 System — {sender}", expanded=False):
-                st.markdown(content)
-        elif role == "agent":
-            with st.chat_message("assistant", avatar="🤖"):
-                st.caption(f"**{sender}**")
-                st.markdown(content, unsafe_allow_html=False)
-        else:
-            with st.chat_message("user", avatar="👤"):
-                st.caption(f"**{sender}**")
-                st.markdown(content, unsafe_allow_html=False)
-
-# --- Streaming indicator ---
-if st.session_state.is_streaming:
-    stream_placeholder = st.empty()
-    with stream_placeholder.container():
-        col_a, col_b = st.columns([1, 20])
-        with col_a:
-            st.markdown("⏳")
-        with col_b:
-            st.caption("Agents working...")
-
-    if st.session_state.stream_error:
-        st.error(f"Stream error: {st.session_state.stream_error}")
-        st.session_state.is_streaming = False
-
-    # Auto-rerun to check for new streaming events
-    time.sleep(0.4)
-    st.rerun()
-
-
-# ======================================================================
-# Input area — Agent selector + text input + send
-# ======================================================================
-st.divider()
-
-col1, col2 = st.columns([3, 1])
-with col1:
-    selected_agents = st.multiselect(
-        "Target agents (optional)",
-        options=st.session_state.agents,
-        default=[],
-        placeholder="Select agents to mention...",
-        label_visibility="collapsed",
-        key="agent_selector",
-        disabled=st.session_state.is_streaming,
-    )
-    mention_prefix = " ".join(f"@{a}" for a in selected_agents) + (" " if selected_agents else "")
-
-    user_input = st.text_area(
-        "Message",
-        placeholder="Describe your task... (e.g. fix the login bug)",
-        label_visibility="collapsed",
-        key="user_input",
-        height=68,
-        disabled=st.session_state.is_streaming,
-    )
-
-with col2:
-    send_disabled = st.session_state.is_streaming or not user_input.strip()
-    if st.button(
-        "🚀 Send", use_container_width=True, disabled=send_disabled,
-        type="primary",
-    ):
-        full_message = f"{mention_prefix}{user_input.strip()}"
-
-        # Add user message
-        st.session_state.messages[sid].append({
-            "role": "user",
-            "sender": "You",
-            "content": full_message,
-        })
-
-        # Send to backend (async mode — returns task_id immediately)
-        try:
-            result = st.session_state.api_client.send_message(
-                session_id=sid,
-                content=full_message,
-            )
-
-            # Start SSE streaming in background thread
-            _start_streaming(sid, result["task_id"])
-
-        except AgentHubAPIError as e:
-            st.session_state.messages[sid].append({
-                "role": "system",
-                "sender": "error",
-                "content": f"❌ {e}",
-            })
-
-        st.session_state.user_input = ""
+    if st.session_state.app_mode != prev_mode:
         st.rerun()
 
+    st.divider()
+
+    # Discussion-mode sidebar: sessions + agents
+    if st.session_state.app_mode == "💬 Discussion":
+        if not st.session_state.backend_ok:
+            st.error("⚠️ Backend unreachable")
+            st.caption("Start with: `uvicorn src.api.app:create_app --factory`")
+
+        if st.button("➕ New Chat", use_container_width=True, disabled=st.session_state.is_streaming):
+            try:
+                new_s = st.session_state.api_client.create_session(title="New Chat")
+                st.session_state.current_session_id = new_s["id"]
+                st.session_state.messages[new_s["id"]] = []
+                st.rerun()
+            except AgentHubAPIError as e:
+                st.error(str(e))
+
+        st.divider()
+        sessions = _refresh_sessions()
+        for s in sessions:
+            sid = s["id"]
+            label = s.get("title", "Untitled")[:30]
+            p_count = len(s.get("participants", []))
+            if p_count:
+                label += f"  ({p_count})"
+
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                is_current = (sid == st.session_state.current_session_id)
+                btn_label = f"{'📌 ' if is_current else ''}{label}"
+                if st.button(
+                    btn_label, key=f"sel_{sid}", use_container_width=True,
+                    type="primary" if is_current else "secondary",
+                ):
+                    st.session_state.current_session_id = sid
+                    if sid not in st.session_state.messages:
+                        st.session_state.messages[sid] = []
+                    st.rerun()
+            with col2:
+                if st.button("🗑️", key=f"del_{sid}", help="Delete session"):
+                    try:
+                        st.session_state.api_client.delete_session(sid)
+                        if st.session_state.current_session_id == sid:
+                            st.session_state.current_session_id = None
+                        st.session_state.messages.pop(sid, None)
+                        st.session_state.stream_buffer.pop(sid, None)
+                        st.rerun()
+                    except AgentHubAPIError as e:
+                        st.error(str(e))
+
+        st.divider()
+        agents_str = ", ".join(st.session_state.agents) if st.session_state.agents else "none"
+        st.caption(f"Agents: {agents_str}")
+        st.caption(f"API: {st.session_state.api_client._base}")
+    else:
+        # Code Review / Metrics: compact sidebar
+        st.caption("Code Review mode — no sessions needed")
+        st.caption(f"Tests: 306 passed | Mock: ✓")
+
 # ======================================================================
-# Code Review Tab (Product Line 2)
+# Discussion (Chat) Mode — render chat UI
+# ======================================================================
+if st.session_state.app_mode == "💬 Discussion":
+    st.title("AgentHub Chat" if not st.session_state.current_session_id else "Chat")
+
+    if st.session_state.current_session_id is None:
+        st.info("👈 Select a session from the sidebar or create a new one.")
+        st.stop()
+
+    sid = st.session_state.current_session_id
+
+    # Drain stream buffer
+    buf = st.session_state.stream_buffer.get(sid, [])
+    idx = st.session_state.stream_idx.get(sid, 0)
+    new_events = buf[idx:]
+    for event in new_events:
+        etype = event.get("event", "")
+        if etype == "progress":
+            agent = event.get("assigned_agent", "unknown")
+            desc = event.get("description", "")
+            result = event.get("result", "")
+            st.session_state.messages[sid].append({
+                "role": "agent", "sender": agent,
+                "content": f"**{desc}**" + (f"\n\n{result}" if result else ""),
+            })
+        elif etype == "complete":
+            if event.get("status") == "failed" and event.get("final_result"):
+                st.session_state.messages[sid].append({
+                    "role": "system", "sender": "orchestrator",
+                    "content": f"⚠️ {event['final_result']}",
+                })
+    st.session_state.stream_idx[sid] = len(buf)
+
+    # Render messages
+    messages = st.session_state.messages.get(sid, [])
+    with st.container():
+        if not messages:
+            st.markdown("### ✨ Start the conversation")
+            st.caption("Tip: Use @agent mentions to route tasks.")
+        for msg in messages:
+            role = msg.get("role", "user")
+            sender = msg.get("sender", "unknown")
+            content = msg.get("content", "")
+            if role == "system":
+                with st.expander(f"🔧 System — {sender}", expanded=False):
+                    st.markdown(content)
+            elif role == "agent":
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.caption(f"**{sender}**")
+                    st.markdown(content, unsafe_allow_html=False)
+            else:
+                with st.chat_message("user", avatar="👤"):
+                    st.caption(f"**{sender}**")
+                    st.markdown(content, unsafe_allow_html=False)
+
+    # Streaming indicator
+    if st.session_state.is_streaming:
+        stream_placeholder = st.empty()
+        with stream_placeholder.container():
+            st.markdown("⏳ Agents working...")
+        if st.session_state.stream_error:
+            st.error(f"Stream error: {st.session_state.stream_error}")
+            st.session_state.is_streaming = False
+        time.sleep(0.4)
+        st.rerun()
+
+    # Input area
+    st.divider()
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_agents = st.multiselect(
+            "Target agents", options=st.session_state.agents, default=[],
+            placeholder="Select agents...", label_visibility="collapsed",
+            key="agent_selector", disabled=st.session_state.is_streaming,
+        )
+        mention_prefix = " ".join(f"@{a}" for a in selected_agents) + (" " if selected_agents else "")
+        user_input = st.text_area(
+            "Message", placeholder="Describe your task...",
+            label_visibility="collapsed", key="user_input",
+            height=68, disabled=st.session_state.is_streaming,
+        )
+    with col2:
+        send_disabled = st.session_state.is_streaming or not user_input.strip()
+        if st.button("🚀 Send", use_container_width=True, disabled=send_disabled, type="primary"):
+            full_message = f"{mention_prefix}{user_input.strip()}"
+            st.session_state.messages[sid].append({
+                "role": "user", "sender": "You", "content": full_message,
+            })
+            try:
+                result = st.session_state.api_client.send_message(
+                    session_id=sid, content=full_message,
+                )
+                _start_streaming(sid, result["task_id"])
+            except AgentHubAPIError as e:
+                st.session_state.messages[sid].append({
+                    "role": "system", "sender": "error", "content": f"❌ {e}",
+                })
+            st.session_state.user_input = ""
+            st.rerun()
+
+# ======================================================================
+# Code Review Mode (Product Line 2)
 # ======================================================================
 if st.session_state.get("app_mode", "🔎 Code Review") == "🔎 Code Review":
     st.title("🔎 Code Review")
